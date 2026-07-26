@@ -281,6 +281,7 @@ gh api graphql --paginate \
               originalLine
               comments(first: 100) {
                 nodes {
+                  databaseId
                   author { login }
                   body
                   createdAt
@@ -451,6 +452,7 @@ fi
     else
       .[] |
       "### Thread on `\(.path)` line \(.line // .originalLine // "unknown")\(if .isOutdated then " (outdated — code has changed since this comment)" else "" end)\n" +
+      "- Reply to comment ID: \(.comments.nodes[0].databaseId // "unknown")\n" +
       ( .comments.nodes | map(
           "#### @\(.author.login // "unknown")\n- Created: \(.createdAt)\n- URL: \(.url)\n- Diff hunk:\n```diff\n\(.diffHunk // "")\n```\n\nComment:\n\(.body // "")\n"
         ) | join("\n") )

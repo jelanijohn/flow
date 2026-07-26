@@ -50,6 +50,8 @@ For each **invalid** item, post a reply on the PR explaining the reasoning — w
   gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies -f body='...'
   ```
 
+  Use the `Reply to comment ID` printed in the thread's header — it is the thread's *first* comment's ID. Replying to a later comment in the thread fails.
+
 - Other invalid items (review bodies, conversation comments, CI feedback with no thread) — cover them in a single PR comment listing each item and why no change is needed:
 
   ```bash
