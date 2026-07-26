@@ -77,7 +77,19 @@ For each **invalid** item, post a reply on the PR using the matching template fr
 
 ### Validate and record the cycle
 
-After applying fixes, re-run local validation (test, lint, typecheck, build) as appropriate for the project.
+After applying fixes, re-run local validation. Determine validation commands in this order, stopping at the first that yields them:
+
+1. A `## Commands`, `## Validation`, or equivalent section in the repository's `CLAUDE.md`.
+2. `package.json` `scripts` — run the subset matching `test`, `lint`, `typecheck`, `build` that actually exist.
+3. The project's package manager convention: `Gemfile` → `bundle exec rspec` / `rubocop`; `pyproject.toml` → `pytest` / `ruff`; `go.mod` → `go test ./...` / `go vet ./...`; `Cargo.toml` → `cargo test` / `cargo clippy`.
+
+If none of these yield commands, say so rather than guessing, and ask the human once. Record the commands you used in the cycle marker comment so later sessions do not re-derive them.
+
+### Confirm progress
+
+Before recording the cycle, compare the new report's **Failing Checks At Collection** against the previous report's. For each check that was failing and is still failing, confirm the failure is different — a new error, a later line, a different assertion. If a check is failing identically to the previous cycle, your fix did not work. Say so explicitly, do not count the cycle as productive, and ask the human before spending another cycle on the same check.
+
+### Record the cycle
 
 Once fixes are pushed, record the completed cycle on the PR so future sessions can see it:
 
@@ -97,7 +109,7 @@ If this cycle pushed fixes and the new cycle count is still under 3, wait for Co
 
    Forward `--no-request-review` if the user passed it. The script waits for a new Copilot review to start on the pushed head (requesting one if none auto-starts, unless disabled) and finishes with a `Copilot review status: ...` line.
 
-2. If the status is `completed`: re-run the collection script with the original arguments, read the fresh report, and repeat the full cycle — classify, fix, reply, validate, record.
+2. If the status is `completed`: re-run the collection script with the original arguments, read the fresh report, and repeat the full cycle — classify, fix, reply, validate, confirm progress, record.
 
 3. Stop looping and summarize the final state for the user when any of these happens:
    - no **valid** items remain — report that the PR is clean;

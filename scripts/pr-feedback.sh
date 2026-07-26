@@ -435,6 +435,19 @@ JQ_UNTRUST='
   ' "$CHECKS_JSON"
   echo
 
+  # Machine-readable list of failing checks, so the next cycle can verify the
+  # fix moved the needle on the specific checks that motivated it.
+  echo "## Failing Checks At Collection"
+  jq -r '
+    [ .check_runs[] | select(.conclusion == "failure") ] |
+    if length == 0 then
+      "None."
+    else
+      .[] | "- \(.name) (check run \(.id))"
+    end
+  ' "$CHECKS_JSON"
+  echo
+
   # Failure logs for failed GitHub Actions runs, so fixes need no second fetch.
   # Filter to Actions URLs before capture(): capture() errors on non-matching
   # input, and one non-Actions failed check (Vercel, CodeQL, ...) would
