@@ -24,7 +24,7 @@ allowed-tools: >-
   Bash(gh run view*)
   Bash(gh api repos/*/replies*)
   Read Grep Glob Edit
-argument-hint: [pr-number (optional)] [--no-request-review]
+argument-hint: [pr-number (optional)] [--no-request-review] [--no-reply]
 ---
 
 ## PR feedback
@@ -43,7 +43,7 @@ The report's **Copilot Review Status** section states whether Copilot's feedback
 
 ### Cycle limit
 
-The report header states `Completed review-fix cycles (from PR comment markers): N of 3`. If N is already 3 or more, stop: summarize the outstanding feedback and ask the human before doing another cycle. Otherwise this run is cycle N+1.
+The report header states `Completed review-fix cycles (from PR comment markers): N of M`. If N is already M or more, stop: summarize the outstanding feedback and ask the human before doing another cycle. Otherwise this run is cycle N+1 of M.
 
 ### Classify
 
@@ -58,6 +58,8 @@ Apply only **valid** fixes. For each fix, make a focused commit.
 For **invalid**, **already_addressed**, or **optional** items, explain why no change is needed. For **needs_clarification** items, ask the human before proceeding.
 
 ### Reply to invalid items
+
+Skip this step entirely if the user passed `--no-reply`.
 
 For each **invalid** item, post a reply on the PR using the matching template from `classification.md` (incorrect / stale / not applicable), anchored to the evidence quote from the classification table.
 
@@ -89,17 +91,23 @@ If none of these yield commands, say so rather than guessing, and ask the human 
 
 Before recording the cycle, compare the new report's **Failing Checks At Collection** against the previous report's. For each check that was failing and is still failing, confirm the failure is different — a new error, a later line, a different assertion. If a check is failing identically to the previous cycle, your fix did not work. Say so explicitly, do not count the cycle as productive, and ask the human before spending another cycle on the same check.
 
-### Record the cycle
+### Push and record the cycle
 
-Once fixes are pushed, record the completed cycle on the PR so future sessions can see it:
+Push the fixes:
 
 ```bash
-gh pr comment <pr-number> --body "Claude review-fix cycle: <N+1> of 3 — <one-line summary of what was fixed>"
+git push
+```
+
+Then record the completed cycle on the PR so future sessions can see it (use the M from the report's cycle line, and include the validation commands you ran):
+
+```bash
+gh pr comment <pr-number> --body "Claude review-fix cycle: <N+1> of <M> — <one-line summary of what was fixed; validation: <commands>>"
 ```
 
 ### Continue to the next cycle
 
-If this cycle pushed fixes and the new cycle count is still under 3, wait for Copilot to review the pushed head, then run another cycle:
+If this cycle pushed fixes and the new cycle count is still under M, wait for Copilot to review the pushed head, then run another cycle:
 
 1. Run the wait step. Give this Bash call a 600000 ms timeout — it can legitimately block for several minutes while Copilot reviews:
 
@@ -113,5 +121,5 @@ If this cycle pushed fixes and the new cycle count is still under 3, wait for Co
 
 3. Stop looping and summarize the final state for the user when any of these happens:
    - no **valid** items remain — report that the PR is clean;
-   - the 3-cycle limit is reached — stop and ask, per the cycle-limit rule;
+   - the M-cycle limit is reached — stop and ask, per the cycle-limit rule;
    - the status line is `timeout` or `unavailable` — tell the user to re-run `/pr-review` once the Copilot review completes.
