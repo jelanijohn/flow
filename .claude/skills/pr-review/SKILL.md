@@ -47,15 +47,9 @@ The report header states `Completed review-fix cycles (from PR comment markers):
 
 ### Classify
 
-For each feedback item (review comment, unresolved inline thread, CI failure, conversation comment), classify it as one of:
+Read `classification.md` in this skill's directory. It defines the five categories, the evidence standard for `invalid` and `already_addressed` (a `file:line` quote is required before dismissing feedback), the classification table format including its Evidence column, and the reply templates.
 
-- **valid** — should be fixed
-- **invalid** — incorrect, stale, or not applicable
-- **already_addressed** — already handled by current code (threads marked resolved or outdated in the report are strong signals)
-- **needs_clarification** — requires human input before acting
-- **optional** — stylistic or non-blocking improvement
-
-Present your classifications in a summary table before making any changes.
+Classify every feedback item per that file and present the full classification table before making any changes.
 
 ### Fix
 
@@ -65,7 +59,7 @@ For **invalid**, **already_addressed**, or **optional** items, explain why no ch
 
 ### Reply to invalid items
 
-For each **invalid** item, post a reply on the PR explaining the reasoning — why the feedback is incorrect, stale, or not applicable. Keep it concise and factual (reference the relevant code or commit where helpful).
+For each **invalid** item, post a reply on the PR using the matching template from `classification.md` (incorrect / stale / not applicable), anchored to the evidence quote from the classification table.
 
 - Inline review comments — reply in the thread:
 
