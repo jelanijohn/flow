@@ -395,16 +395,41 @@ fi
   echo
 
   # Failure logs for failed GitHub Actions runs, so fixes need no second fetch.
-  FAILED_RUN_IDS="$(jq -r '.check_runs[] | select(.conclusion == "failure") | .html_url // .details_url // "" | capture("/actions/runs/(?<id>[0-9]+)").id' "$CHECKS_JSON" 2>/dev/null | sort -u || true)"
-  if [[ -n "$FAILED_RUN_IDS" ]]; then
+  # Filter to Actions URLs before capture(): capture() errors on non-matching
+  # input, and one non-Actions failed check (Vercel, CodeQL, ...) would
+  # otherwise abort the whole jq run and silently drop every run ID.
+  FAILED_RUN_IDS="$(jq -r '
+    .check_runs[]
+    | select(.conclusion == "failure")
+    | (.html_url // .details_url // "")
+    | select(test("/actions/runs/[0-9]+"))
+    | capture("/actions/runs/(?<id>[0-9]+)").id
+  ' "$CHECKS_JSON" 2>/dev/null | sort -u || true)"
+
+  FAILED_NO_LOGS="$(jq -r '
+    .check_runs[]
+    | select(.conclusion == "failure")
+    | select(((.html_url // .details_url // "") | test("/actions/runs/[0-9]+")) | not)
+    | "- \(.name) — \(.html_url // .details_url // "no URL")"
+  ' "$CHECKS_JSON" 2>/dev/null || true)"
+
+  if [[ -n "$FAILED_RUN_IDS" || -n "$FAILED_NO_LOGS" ]]; then
     echo "## Failed CI Logs"
     while IFS= read -r RUN_ID; do
+      [[ -z "$RUN_ID" ]] && continue
       echo "### Workflow run $RUN_ID (last 200 lines of failed steps)"
       echo '```'
       gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -n 200 || echo "Could not fetch logs for run $RUN_ID"
       echo '```'
       echo
     done <<< "$FAILED_RUN_IDS"
+    if [[ -n "$FAILED_NO_LOGS" ]]; then
+      echo "### Failed checks with no fetchable logs"
+      echo "These checks failed but are not GitHub Actions runs, so their logs cannot"
+      echo "be fetched here. Open the URL to see the failure — do not assume they passed:"
+      echo "$FAILED_NO_LOGS"
+      echo
+    fi
   fi
 
   echo "## Reviews"
