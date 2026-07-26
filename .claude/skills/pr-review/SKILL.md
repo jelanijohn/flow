@@ -1,6 +1,29 @@
 ---
-description: Collect and triage PR feedback (Copilot review, CI failures, human comments) after pushing a branch; classifies each item before fixing anything
-allowed-tools: Bash(git *) Bash(gh *) Bash(${CLAUDE_PROJECT_DIR}/scripts/*) Read Grep Glob Edit Write
+description: >-
+  Collect and triage feedback on a GitHub pull request (Copilot review, CI
+  failures, human comments) after pushing a branch; classifies each item before
+  fixing anything. GitHub and `gh` only. Does not review the diff itself — pair
+  with a review-producer skill for that.
+# disable-model-invocation: this skill commits, pushes, and posts public PR
+# comments; it must only run as an explicit /pr-review, never on a fuzzy
+# description match.
+disable-model-invocation: true
+# Pattern notes (verified empirically 2026-07-26, claude 2.1.220):
+# - ${CLAUDE_PROJECT_DIR} is substituted in both the skill body and these
+#   patterns before matching, and the matcher strips shell quotes from the
+#   command — so the quoted invocation in the body matches the unquoted
+#   pattern below. A literal ${...} typed by the model would NOT match.
+# - Wildcards cross "/": gh api repos/*/replies* matches the deep
+#   .../comments/<id>/replies path and rejects other gh api endpoints.
+# - git push has no wildcard on purpose: blocks --force and refspecs.
+allowed-tools: >-
+  Bash(${CLAUDE_PROJECT_DIR}/scripts/pr-feedback.sh *)
+  Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git rev-parse*)
+  Bash(git add*) Bash(git commit*) Bash(git push)
+  Bash(gh pr view*) Bash(gh pr comment*) Bash(gh pr checks*)
+  Bash(gh run view*)
+  Bash(gh api repos/*/replies*)
+  Read Grep Glob Edit
 argument-hint: [pr-number (optional)] [--no-request-review]
 ---
 
