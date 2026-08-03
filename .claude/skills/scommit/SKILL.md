@@ -17,5 +17,6 @@ with `git commit -am`.
 ## Notes:
 - `git commit -am` stages and commits **tracked** files only — new untracked files are not included. That's expected for this command; use `/commit` if you need to stage new files.
 - Match the style of recent commits (!`git log --oneline -10`).
+- Do NOT prefix the commit message with emojis — plain text only, even if recent commits use them.
 - Do NOT add a Claude co-authorship footer.
 - Do NOT run lint/build/test or other pre-commit checks — that's the whole point of this being the *simple* commit.
