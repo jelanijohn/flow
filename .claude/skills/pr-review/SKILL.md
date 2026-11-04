@@ -111,7 +111,13 @@ Skip this step entirely if the user passed `--no-resolve`. Run it only after the
 
 Each unresolved inline thread in the report carries a `Thread ID` line (`PRRT_...`) and says whether it is a Copilot thread or a human thread.
 
-Before resolving any thread as addressed — a fixed `valid` or `optional` item, an `already_addressed` item, or a stale `invalid` item — confirm the code you are relying on is actually on the pushed head, not only in your working tree: `git status --short <file>` must print nothing for each file quoted in the row's Evidence or touched by the fix, and `git rev-parse HEAD` must equal the pushed commit. If either check fails, the thread stays open and you say why.
+Before resolving any thread, with any reason, confirm the code you are relying on is actually on this PR, not only in your working tree or on some other branch. For each file quoted in the row's Evidence or touched by the fix, `git status --short <file>` must print nothing. And `git rev-parse HEAD` must equal the PR's current head as GitHub reports it:
+
+```bash
+gh pr view <pr-number> --json headRefOid -q .headRefOid
+```
+
+This applies to `INVALID` resolutions as much as `ADDRESSED` ones: an Incorrect or Not-applicable reply quotes code the reviewer must be able to see on the PR. If either check fails, the thread stays open and you say why.
 
 Resolve each thread you acted on with the reason from the mapping in `classification.md`, one call per thread:
 
