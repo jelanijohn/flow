@@ -109,7 +109,11 @@ gh pr comment <pr-number> --body "Claude review-fix cycle: <N+1> of <M> — <one
 
 Skip this step entirely if the user passed `--no-resolve`. Run it only after the push has landed, so that a thread marked addressed points at code that is actually on the PR.
 
-Each unresolved inline thread in the report carries a `Thread ID` line (`PRRT_...`) and says whether it is a Copilot thread or a human thread. Resolve each thread you acted on with the reason from the mapping in `classification.md`, one call per thread:
+Each unresolved inline thread in the report carries a `Thread ID` line (`PRRT_...`) and says whether it is a Copilot thread or a human thread.
+
+Before resolving any thread as addressed — a fixed `valid` or `optional` item, an `already_addressed` item, or a stale `invalid` item — confirm the code you are relying on is actually on the pushed head, not only in your working tree: `git status --short <file>` must print nothing for each file quoted in the row's Evidence or touched by the fix, and `git rev-parse HEAD` must equal the pushed commit. If either check fails, the thread stays open and you say why.
+
+Resolve each thread you acted on with the reason from the mapping in `classification.md`, one call per thread:
 
 ```bash
 "${CLAUDE_PROJECT_DIR}/scripts/pr-feedback.sh" --resolve <thread-id> <ADDRESSED|WONT_FIX|INVALID|NONE>
