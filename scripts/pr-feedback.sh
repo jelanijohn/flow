@@ -8,6 +8,7 @@ set -euo pipefail
 #   scripts/pr-feedback.sh 123
 #   scripts/pr-feedback.sh 123 --out .claude/pr-feedback.md
 #   scripts/pr-feedback.sh 123 --after-push [--no-request-review]
+#   scripts/pr-feedback.sh --resolve PRRT_xxx ADDRESSED|WONT_FIX|INVALID|NONE
 #
 # Flags:
 #   --out <file>          write the report to <file> (default .claude/pr-feedback.md)
@@ -15,10 +16,18 @@ set -euo pipefail
 #                         generating a report; prints "Copilot review status: ..."
 #   --no-request-review   in --after-push mode, never request a Copilot review
 #   --no-wait             don't block on an in-progress Copilot review before collecting
+#   --resolve <id> <why>  resolve one inline review thread (node ID from the report's
+#                         "Thread ID" line) instead of generating a report. <why> is the
+#                         resolution reason GitHub shows in the thread header — ADDRESSED,
+#                         WONT_FIX, or INVALID — and is only accepted by GitHub on Copilot
+#                         threads; pass NONE for a human-authored thread.
+#   --no-reply            consumed by the skill: don't post public replies to invalid items
+#   --no-resolve          consumed by the skill: don't resolve threads after acting on them
 #
 # Env tunables:
 #   COPILOT_WAIT_TIMEOUT     seconds to wait for an in-progress review (default 300)
 #   COPILOT_STARTUP_TIMEOUT  seconds to wait for auto-review to start after a push (default 90)
+#   COPILOT_REQUEST_TIMEOUT  seconds to wait for a review to start after requesting one (default 120)
 #   PR_REVIEW_MAX_CYCLES     review-fix cycle cap reported to the skill (default 3)
 
 PR_NUMBER=""
@@ -28,7 +37,14 @@ REQUEST_REVIEW=1
 WAIT_FOR_COPILOT=1
 COPILOT_WAIT_TIMEOUT="${COPILOT_WAIT_TIMEOUT:-300}"
 COPILOT_STARTUP_TIMEOUT="${COPILOT_STARTUP_TIMEOUT:-90}"
+COPILOT_REQUEST_TIMEOUT="${COPILOT_REQUEST_TIMEOUT:-120}"
 PR_REVIEW_MAX_CYCLES="${PR_REVIEW_MAX_CYCLES:-3}"
+# Exact GraphQL login of GitHub's Copilot code reviewer. Used to label a
+# thread as Copilot's (resolution reasons apply only to those); a substring
+# match would also catch human accounts like "copilot-helper".
+COPILOT_REVIEWER_LOGIN="copilot-pull-request-reviewer"
+RESOLVE_THREAD_ID=""
+RESOLVE_REASON=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,10 +64,16 @@ while [[ $# -gt 0 ]]; do
       WAIT_FOR_COPILOT=0
       shift
       ;;
-    --no-reply)
-      # Consumed by the skill's instructions (suppresses public replies to
-      # invalid items); accepted here so $ARGUMENTS can be passed through whole.
+    --no-reply|--no-resolve)
+      # Consumed by the skill's instructions (suppress public replies to
+      # invalid items / thread resolution); accepted here so $ARGUMENTS can
+      # be passed through whole.
       shift
+      ;;
+    --resolve)
+      RESOLVE_THREAD_ID="${2:?--resolve requires a thread node ID (PRRT_...)}"
+      RESOLVE_REASON="${3:?--resolve requires a reason: ADDRESSED, WONT_FIX, INVALID, or NONE}"
+      shift 3
       ;;
     -*)
       echo "Unknown option: $1" >&2
@@ -86,6 +108,42 @@ REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+# --- Resolve mode: mark one inline review thread resolved ------------------
+# The thread node ID is global, so no PR number is needed. The resolution
+# reason is the "Addressed / Won't fix / Incorrect" choice from the web UI's
+# Resolve-conversation dropdown; GitHub documents it as applying to Copilot
+# code review threads, so NONE omits it for human-authored threads. The reason
+# is write-only: no field on PullRequestReviewThread reads it back.
+
+if [[ -n "$RESOLVE_THREAD_ID" ]]; then
+  if [[ "$RESOLVE_THREAD_ID" != PRRT_* ]]; then
+    echo "Thread ID must be a review-thread node ID starting with PRRT_ (got: $RESOLVE_THREAD_ID)" >&2
+    exit 1
+  fi
+  case "$RESOLVE_REASON" in
+    ADDRESSED|WONT_FIX|INVALID)
+      RESOLVE_INPUT="{threadId: \$id, resolutionReason: $RESOLVE_REASON}"
+      ;;
+    NONE)
+      RESOLVE_INPUT="{threadId: \$id}"
+      ;;
+    *)
+      echo "Unknown resolution reason: $RESOLVE_REASON (expected ADDRESSED, WONT_FIX, INVALID, or NONE)" >&2
+      exit 1
+      ;;
+  esac
+  RESULT="$(gh api graphql -F id="$RESOLVE_THREAD_ID" -f query="
+    mutation(\$id: ID!) {
+      resolveReviewThread(input: $RESOLVE_INPUT) {
+        thread { id isResolved path line originalLine }
+      }
+    }")"
+  echo "$RESULT" | jq -r --arg reason "$RESOLVE_REASON" '
+    .data.resolveReviewThread.thread
+    | "Resolved thread \(.id) on `\(.path)` line \(.line // .originalLine // "unknown") (reason: \($reason)) — isResolved=\(.isResolved)"'
+  exit 0
+fi
 
 if [[ -z "$PR_NUMBER" ]]; then
   PR_NUMBER="$(gh pr view --json number -q .number 2>/dev/null || true)"
@@ -186,29 +244,43 @@ if (( AFTER_PUSH == 1 )); then
     exit 0
   fi
 
-  STARTED=0
-  WAITED=0
-  while (( WAITED < COPILOT_STARTUP_TIMEOUT )); do
-    if [[ "$(copilot_in_progress "$EXPECTED_SHA")" == "true" ]]; then
-      STARTED=1
-      break
-    fi
-    LAST_COPILOT_SHA="$(copilot_last_review_sha)"
-    if [[ -n "$LAST_COPILOT_SHA" && "$LAST_COPILOT_SHA" == "$EXPECTED_SHA" ]]; then
-      echo "Copilot review status: completed"
-      exit 0
-    fi
-    echo "Waiting for Copilot auto-review to start... (${WAITED}s/${COPILOT_STARTUP_TIMEOUT}s)"
-    sleep 10
-    WAITED=$(( WAITED + 10 ))
-  done
+  # Polls until a Copilot review of $1 is in progress (sets STARTED=1), or a
+  # completed review already covers it (prints the status line and exits).
+  # $2 is the budget in seconds, $3 a label for the progress line.
+  wait_for_copilot_start() {
+    local sha="$1" budget="$2" label="$3" waited=0
+    STARTED=0
+    while (( waited < budget )); do
+      if [[ "$(copilot_in_progress "$sha")" == "true" ]]; then
+        STARTED=1
+        return 0
+      fi
+      LAST_COPILOT_SHA="$(copilot_last_review_sha)"
+      if [[ -n "$LAST_COPILOT_SHA" && "$LAST_COPILOT_SHA" == "$sha" ]]; then
+        echo "Copilot review status: completed"
+        exit 0
+      fi
+      echo "Waiting for Copilot $label to start... (${waited}s/${budget}s)"
+      sleep 10
+      waited=$(( waited + 10 ))
+    done
+  }
+
+  wait_for_copilot_start "$EXPECTED_SHA" "$COPILOT_STARTUP_TIMEOUT" "auto-review"
 
   if (( STARTED == 0 )); then
     if (( REQUEST_REVIEW == 1 )); then
       echo "No Copilot review auto-started; requesting one..."
       if gh api "repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
           -f 'reviewers[]=copilot-pull-request-reviewer[bot]' >/dev/null 2>&1; then
-        sleep 5
+        # The check run for a requested review took 55–75s to appear in
+        # practice; a fixed short sleep here made the in-progress poller
+        # below see nothing and report "completed" against the old head.
+        wait_for_copilot_start "$EXPECTED_SHA" "$COPILOT_REQUEST_TIMEOUT" "requested review"
+        if (( STARTED == 0 )); then
+          echo "Copilot review status: timeout (requested a review but none started within ${COPILOT_REQUEST_TIMEOUT}s)"
+          exit 0
+        fi
       else
         echo "Copilot review status: unavailable (could not request a Copilot review — is Copilot code review enabled for this repo?)"
         exit 0
@@ -281,6 +353,7 @@ gh api graphql --paginate \
           reviewThreads(first: 50, after: $endCursor) {
             pageInfo { hasNextPage endCursor }
             nodes {
+              id
               isResolved
               isOutdated
               path
@@ -289,7 +362,7 @@ gh api graphql --paginate \
               comments(first: 100) {
                 nodes {
                   databaseId
-                  author { login }
+                  author { login __typename }
                   body
                   createdAt
                   url
@@ -508,7 +581,7 @@ JQ_UNTRUST='
   echo
 
   echo "## Inline Review Threads (unresolved)"
-  jq -r "$JQ_UNTRUST"'
+  jq -r --arg copilot "$COPILOT_REVIEWER_LOGIN" "$JQ_UNTRUST"'
     [ .[] | select(.isResolved | not) ] |
     if length == 0 then
       "No unresolved inline review threads."
@@ -516,6 +589,7 @@ JQ_UNTRUST='
       .[] |
       "### Thread on `\(.path)` line \(.line // .originalLine // "unknown")\(if .isOutdated then " (outdated — code has changed since this comment)" else "" end)\n" +
       "- Reply to comment ID: \(.comments.nodes[0].databaseId // "unknown")\n" +
+      "- Thread ID: \(.id) (\(if ((.comments.nodes[0].author.login // "") == $copilot and (.comments.nodes[0].author.__typename // "") == "Bot") then "Copilot thread — resolve with a reason" else "human thread — resolve with NONE" end))\n" +
       ( .comments.nodes | map(
           "#### @\(.author.login // "unknown")\n- Created: \(.createdAt)\n- URL: \(.url)\n- Diff hunk:\n\(.diffHunk | sentinel)\n\nComment:\n\(.body | sentinel)\n"
         ) | join("\n") )

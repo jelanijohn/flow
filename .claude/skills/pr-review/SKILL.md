@@ -24,7 +24,7 @@ allowed-tools: >-
   Bash(gh run view*)
   Bash(gh api repos/*/replies*)
   Read Grep Glob Edit
-argument-hint: [pr-number (optional)] [--no-request-review] [--no-reply]
+argument-hint: [pr-number (optional)] [--no-request-review] [--no-reply] [--no-resolve]
 ---
 
 ## PR feedback
@@ -47,7 +47,7 @@ The report header states `Completed review-fix cycles (from PR comment markers):
 
 ### Classify
 
-Read `classification.md` in this skill's directory. It defines the five categories, the evidence standard for `invalid` and `already_addressed` (a `file:line` quote is required before dismissing feedback), the classification table format including its Evidence column, and the reply templates.
+Read `classification.md` in this skill's directory. It defines the six categories, the evidence standard for `invalid` and `already_addressed` (a `file:line` quote is required before dismissing feedback), the classification table format including its Evidence column, the reply templates, and the resolution reason each category maps to.
 
 Classify every feedback item per that file and present the full classification table before making any changes.
 
@@ -55,13 +55,13 @@ Classify every feedback item per that file and present the full classification t
 
 Apply only **valid** fixes. For each fix, make a focused commit.
 
-For **invalid**, **already_addressed**, or **optional** items, explain why no change is needed. For **needs_clarification** items, ask the human before proceeding.
+For **invalid**, **already_addressed**, **optional**, or **wont_fix** items, explain why no change is needed. For **needs_clarification** items, ask the human before proceeding.
 
-### Reply to invalid items
+### Reply to invalid and won't-fix items
 
 Skip this step entirely if the user passed `--no-reply`.
 
-For each **invalid** item, post a reply on the PR using the matching template from `classification.md` (incorrect / stale / not applicable), anchored to the evidence quote from the classification table.
+For each **invalid** item, post a reply on the PR using the matching template from `classification.md` (incorrect / stale / not applicable), anchored to the evidence quote from the classification table. For each **wont_fix** item, and each **optional** item you chose not to fix, post the won't-fix template.
 
 - Inline review comments — reply in the thread:
 
@@ -104,6 +104,32 @@ Then record the completed cycle on the PR so future sessions can see it (use the
 ```bash
 gh pr comment <pr-number> --body "Claude review-fix cycle: <N+1> of <M> — <one-line summary of what was fixed; validation: <commands>>"
 ```
+
+### Resolve inline threads
+
+Skip this step entirely if the user passed `--no-resolve`. Run it only after the push has landed, so that a thread marked addressed points at code that is actually on the PR.
+
+Each unresolved inline thread in the report carries a `Thread ID` line (`PRRT_...`) and says whether it is a Copilot thread or a human thread.
+
+Before resolving any thread, with any reason, confirm the code you are relying on is actually on this PR, not only in your working tree or on some other branch. For each file quoted in the row's Evidence or touched by the fix, `git status --short <file>` must print nothing. And `git rev-parse HEAD` must equal the PR's current head as GitHub reports it:
+
+```bash
+gh pr view <pr-number> --json headRefOid -q .headRefOid
+```
+
+This applies to `INVALID` resolutions as much as `ADDRESSED` ones: an Incorrect or Not-applicable reply quotes code the reviewer must be able to see on the PR. If either check fails, the thread stays open and you say why.
+
+Resolve each thread you acted on with the reason from the mapping in `classification.md`, one call per thread:
+
+```bash
+"${CLAUDE_PROJECT_DIR}/scripts/pr-feedback.sh" --resolve <thread-id> <ADDRESSED|WONT_FIX|INVALID|NONE>
+```
+
+- Copilot threads take the reason that matches the row's classification. This is the same Addressed / Won't fix / Incorrect choice the web UI offers in its Resolve-conversation dropdown.
+- Human threads take `NONE` (GitHub only accepts a reason on Copilot threads), and only when the outcome is addressed. Leave a human thread open when you replied to it as invalid or won't-fix: the reviewer who raised it closes it.
+- Never resolve a thread classified `needs_clarification`, or one whose reply you skipped because of `--no-reply`: resolving without the explanation reads as silent dismissal.
+
+Report items without a thread (review bodies, conversation comments, CI feedback) have nothing to resolve; the cycle marker and the summary PR comment are their record.
 
 ### Continue to the next cycle
 
