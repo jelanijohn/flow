@@ -37,6 +37,10 @@ WAIT_FOR_COPILOT=1
 COPILOT_WAIT_TIMEOUT="${COPILOT_WAIT_TIMEOUT:-300}"
 COPILOT_STARTUP_TIMEOUT="${COPILOT_STARTUP_TIMEOUT:-90}"
 PR_REVIEW_MAX_CYCLES="${PR_REVIEW_MAX_CYCLES:-3}"
+# Exact GraphQL login of GitHub's Copilot code reviewer. Used to label a
+# thread as Copilot's (resolution reasons apply only to those); a substring
+# match would also catch human accounts like "copilot-helper".
+COPILOT_REVIEWER_LOGIN="copilot-pull-request-reviewer"
 RESOLVE_THREAD_ID=""
 RESOLVE_REASON=""
 
@@ -342,7 +346,7 @@ gh api graphql --paginate \
               comments(first: 100) {
                 nodes {
                   databaseId
-                  author { login }
+                  author { login __typename }
                   body
                   createdAt
                   url
@@ -561,7 +565,7 @@ JQ_UNTRUST='
   echo
 
   echo "## Inline Review Threads (unresolved)"
-  jq -r "$JQ_UNTRUST"'
+  jq -r --arg copilot "$COPILOT_REVIEWER_LOGIN" "$JQ_UNTRUST"'
     [ .[] | select(.isResolved | not) ] |
     if length == 0 then
       "No unresolved inline review threads."
@@ -569,7 +573,7 @@ JQ_UNTRUST='
       .[] |
       "### Thread on `\(.path)` line \(.line // .originalLine // "unknown")\(if .isOutdated then " (outdated — code has changed since this comment)" else "" end)\n" +
       "- Reply to comment ID: \(.comments.nodes[0].databaseId // "unknown")\n" +
-      "- Thread ID: \(.id) (\(if ((.comments.nodes[0].author.login // "") | ascii_downcase | contains("copilot")) then "Copilot thread — resolve with a reason" else "human thread — resolve with NONE" end))\n" +
+      "- Thread ID: \(.id) (\(if ((.comments.nodes[0].author.login // "") == $copilot and (.comments.nodes[0].author.__typename // "") == "Bot") then "Copilot thread — resolve with a reason" else "human thread — resolve with NONE" end))\n" +
       ( .comments.nodes | map(
           "#### @\(.author.login // "unknown")\n- Created: \(.createdAt)\n- URL: \(.url)\n- Diff hunk:\n\(.diffHunk | sentinel)\n\nComment:\n\(.body | sentinel)\n"
         ) | join("\n") )
