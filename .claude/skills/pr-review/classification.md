@@ -71,7 +71,8 @@ After the cycle's fixes are pushed, each inline thread that was acted on is reso
 | `optional` | fixed and pushed | `ADDRESSED` | `NONE` |
 | `optional` | not fixed, won't-fix reply posted | `WONT_FIX` | leave open |
 | `wont_fix` | won't-fix reply posted | `WONT_FIX` | leave open |
-| `invalid` | invalid reply posted | `INVALID` | leave open |
+| `invalid` — stale | Stale reply posted, naming the commit that fixed it | `ADDRESSED` | leave open |
+| `invalid` — incorrect or not applicable | Incorrect / Not-applicable reply posted | `INVALID` | leave open |
 | `needs_clarification` | waiting on the human | leave open | leave open |
 
 A thread is resolved only after its reply (if the row calls for one) has been posted. If `--no-reply` suppressed the reply, the thread stays open. If `--no-resolve` was passed, nothing in this table is applied.
